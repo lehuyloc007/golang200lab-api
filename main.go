@@ -1,85 +1,109 @@
 package main
 
 import (
-	"fmt"
 	"log"
+	"net/http"
 	"os"
+	"strconv"
 
+	"github.com/gin-gonic/gin"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 )
 
-// CREATE TABLE `todo_items` (
-// 	`id` int NOT NULL AUTO_INCREMENT,
-// 	`title` varchar(150) CHARACTER SET utf8 NOT NULL,
-// 	`status` enum('Doing','Finished') DEFAULT 'Doing',
-// 	`created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-// 	`updated_at` timestamp NOT NULL ON UPDATE CURRENT_TIMESTAMP,
-// 	PRIMARY KEY (`id`)
+// CREATE TABLE `restaurants` (
+// 	`id` int(11) NOT NULL AUTO_INCREMENT,
+// 	`owner_id` int(11) NULL,
+// 	`name` varchar(50) NOT NULL,
+// 	`addr` varchar(255) NOT NULL,
+// 	`city_id` int(11) DEFAULT NULL,
+// 	`lat` double DEFAULT NULL,
+// 	`lng` double DEFAULT NULL,
+// 	`cover` json NULL,
+// 	`logo` json NULL,
+// 	`shipping_fee_per_km` double DEFAULT '0',
+// 	`status` int(11) NOT NULL DEFAULT '1',
+// 	`created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+// 	`updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+// 	PRIMARY KEY (`id`),
+// 	KEY `owner_id` (`owner_id`) USING BTREE,
+// 	KEY `city_id` (`city_id`) USING BTREE,
+// 	KEY `status` (`status`) USING BTREE
 //   ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
-//B2 tạo struct là 1 model của TodoItems
-type TodoItem struct {
-	//'json:"id" gorm:"column:id;` => gọi là tag: là những tuỳ chọn sử dụng để khai báo trường
-	//json:
-	Id     int    `json:"id" gorm:"column:id;"`
-	Title  string `json:"title" gorm:"column:title;"`
-	Status string `json:"status" gorm:"column:status;"`
-}
-
-type TodoItemUpdate struct {
-	//khi update ta để con trỏ string. lúc update bên gorm sẽ kiểm tra xem con trỏ đó có giá trị hay không nếu có giá trị thì lúc đó mới update
-	Title *string `json:"title" gorm:"column:title;"`
+//B2 tạo struct là 1 model của Restaurants
+type Restaurant struct {
+	Id   int    `json:"id" gorm:"column:id;"`
+	Name string `json:"name" gorm:"column:name;"`
+	Addr string `json:"addr" gorm:"column:addr;"`
 }
 
 //B3: method TableName trả về 1 string là tên của bảng
-func (TodoItem) TableName() string {
-	return "todo_items"
+func (Restaurant) TableName() string {
+	return "restaurants"
 }
 
 func main() {
 	//B1 connect db
-	mysqlConnStr, ok := os.LookupEnv("MYSQL_CONNECTION")
-
-	if !ok {
-		log.Fatalln("Missing MySQL connection string")
-	}
-
-	dsn := mysqlConnStr
-	println(dsn)
+	dsn := os.Getenv("MYSQL_CONNECTION")
 	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+
 	if err != nil {
 		log.Fatalln(err)
 	}
 
-	//B4.1 insert new todo item
-	// newTodoItem := TodoItem{Title: "English", Status: "Doing"}
-	// if err := db.Create(&newTodoItem); err != nil {
-	// 	fmt.Println(err)
-	// }
-
-	//B4.2 select all with where
-	var todos []TodoItem
-	db.Where("status = ?", "Doing").Find(&todos)
-	fmt.Println(todos)
-
-	//B4.3 select one
-	var todo TodoItem
-	if err := db.Where("id = 1").First(&todo); err != nil {
-		//Khác nhau giữa log và fmt là log mình có thể log thêm thời gian
-		log.Println(err)
+	if err := runService(db); err != nil {
+		log.Fatalln(err)
 	}
-	fmt.Println(todo)
 
-	//B5 delete
-	//db.Table(TodoItem{}.TableName()).Where("id=3").Delete(nil)
+}
 
-	//B6.1 Update c1
-	// db.Table(TodoItem{}.TableName()).Where("id=3").Updates(map[string]interface{}{
-	// 	"title": "lean go",
-	// })
+func runService(db *gorm.DB) error {
+	r := gin.Default()
+	r.GET("/ping", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"message": "pong",
+		})
+	})
 
-	//B6.1 Update c2
-	newTitle := "lean go"
-	db.Table(TodoItem{}.TableName()).Where("id=3").Updates(&TodoItemUpdate{Title: &newTitle})
+	restautants := r.Group("/restautans")
+	{
+		restautants.POST("", func(ctx *gin.Context) {
+			var data Restaurant
+			//shouldbind lấy dữ liệu từ request body có gì sẽ nạp vào &data
+			if err := ctx.ShouldBind(&data); err != nil {
+				//gin.H = map[string]interface{}
+				ctx.JSON(401, gin.H{
+					"error": err.Error(),
+				})
+				return
+			}
+
+			if err := db.Create(&data).Error; err != nil {
+				ctx.JSON(401, map[string]interface{}{
+					"error": err.Error(),
+				})
+				return
+			}
+			ctx.JSON(http.StatusOK, data)
+		})
+		restautants.GET("/:id", func(ctx *gin.Context) {
+			id, err := strconv.Atoi(ctx.Param("id"))
+			if err != nil {
+				ctx.JSON(401, gin.H{
+					"error": err.Error(),
+				})
+				return
+			}
+			var data Restaurant
+			if err := db.Where("id = ?", id).First(&data).Error; err != nil {
+				ctx.JSON(401, gin.H{
+					"error": err.Error(),
+				})
+				return
+			}
+			ctx.JSON(http.StatusOK, data)
+		})
+	}
+	return r.Run()
 }
